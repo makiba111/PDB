@@ -1,7 +1,7 @@
 Pdb.js
 ====
 
-Overview
+## Overview
  JavaScript browser relational database.
  - SQL like syntax.
  - IndexedDB Backend.
@@ -18,7 +18,9 @@ Overview
  - update
  - delete
  - select-query
+     - with
      - join(inner/left)
+     - where
      - group-by
      - order-by
 
