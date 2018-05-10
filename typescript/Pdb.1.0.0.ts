@@ -1,6 +1,8 @@
 /**
  * Pdb.js - JavaScript browser relational database.
- * @version 1.0.0
+ * @version 1.0.1
+ * 
+ * build typescript 2.8.3.
  * 
  * MIT License
  */
@@ -419,18 +421,20 @@ namespace Pdb {
      * Query Library.
      */
     export class Query {
+        isInnerQuery : boolean;
         db: Array<object>;
         _tableObj: {};
         _unionTable: Array<object>;
 
-        constructor(tables){
+        constructor(tables, queryOption?: boolean){
             this.db = null;
             this._tableObj = tables;
             this._unionTable = [];
+            this.isInnerQuery = queryOption === false;
         }
 
         static qdbJoin(db: Array<object>, table: Array<object>, aliasName: string,
-            whereFunc: Function, params?, query?: Pdb.Query) {
+            whereFunc: Function, params?, query?) {
             if (!db) {
                 return Pdb.Array$map(table, function (r) {
                     var obj = {};
@@ -455,14 +459,9 @@ namespace Pdb {
          * @param {string} joinType "inner-join" or "left-join"
          */
         static tableJoin(db: Array<object>, joinType: string, table: Array<object>, aliasName: string,
-             whereFunc: Function, params, tbls, isInnerQuery: boolean) {
+             whereFunc: Function, params, tbls) {
 
-            var query = null;
-            if(isInnerQuery) {
-                query = new Pdb.Query(JSON.parse(JSON.stringify(tbls)))
-            }
-
-            var r = Pdb.Query.qdbJoin(db, table, aliasName, whereFunc, params, query);
+            var r = Pdb.Query.qdbJoin(db, table, aliasName, whereFunc, params, tbls);
             var arr = [];
             Pdb.Array$each(r, function (row, index) {
                 if (row[aliasName] && row[aliasName].length !== 0) {
@@ -579,7 +578,10 @@ namespace Pdb {
          * SQL "with" phrase.
          */
         with(tableName: string, withFn: Function, params) {
-            var tbl = withFn(params, new Pdb.Query(JSON.parse(JSON.stringify(this._tableObj))));
+            if(this.isInnerQuery) {
+                throw new Error("Inner Query is `with` not support.");
+            }
+            var tbl = withFn(params, new Pdb.Query(this._tableObj));
             this._tableObj[tableName] = tbl;
             return this;
         }
@@ -642,31 +644,28 @@ namespace Pdb {
         /**
          * SQL "left outer join" phrase.
          */
-        leftJoin(tableName: string, aliasName: string, whereFunc: Function, params, isInnerQuery: boolean) {
+        leftJoin(tableName: string, aliasName: string, whereFunc: Function, params) {
             var table = this._tableObj[tableName];
-            this.db = Pdb.Query.tableJoin(this.db, "left-join", table, aliasName, whereFunc, params, this._tableObj, isInnerQuery);
+            this.db = Pdb.Query.tableJoin(this.db, "left-join", table, aliasName, whereFunc, params, this._tableObj);
             return this;
         }
 
         /**
          * SQL "inner join" phrase.
          */
-        innerJoin(tableName: string, aliasName: string, whereFunc: Function, params, isInnerQuery: boolean) {
+        innerJoin(tableName: string, aliasName: string, whereFunc: Function, params) {
             var table = this._tableObj[tableName];                        
-            this.db = Pdb.Query.tableJoin(this.db, "inner-join", table, aliasName, whereFunc, params, this._tableObj, isInnerQuery);
+            this.db = Pdb.Query.tableJoin(this.db, "inner-join", table, aliasName, whereFunc, params, this._tableObj);
             return this;
         }
 
         /**
          * SQL "where" phrase.
          */
-        where(whereFunc: Function, params, isInnerQuery: boolean) {
+        where(whereFunc: Function, params) {
             var tbl = this._tableObj;
             this.db = Pdb.Array$map(this.db, function (row) {
-                let query = null;
-                if(isInnerQuery) {
-                    query = new Pdb.Query(JSON.parse(JSON.stringify(tbl)));
-                }
+                let query = new Pdb.Query(tbl);
                 if (whereFunc(row, params, query)) return row;
             });
             return this;
@@ -772,7 +771,7 @@ namespace Pdb {
             var tbl = this._tableObj;
             var array = [];
             Pdb.Array$each(this.db, function (row, index) {
-                var newRow = columnFunc(row, params, new Pdb.Query(JSON.parse(JSON.stringify(tbl))));
+                var newRow = columnFunc(row, params, new Pdb.Query(tbl));
                 array.push(newRow);
             });
             this.db = array;
@@ -926,16 +925,19 @@ namespace Pdb {
             var tables = {};
 
             var pdb = new Pdb.Database();
-            await pdb.openDatabase(databaseName);
-            for (var i = 0; i < tableList.length; i++) {
-                if (!withTable.includes(tableList[i])) {
-                    var data = await pdb.getTableData(tableList[i]);
-                    tables[tableList[i]] = data;
+            try{
+                await pdb.openDatabase(databaseName);
+                for (var i = 0; i < tableList.length; i++) {
+                    if (!withTable.includes(tableList[i])) {
+                        var data = await pdb.getTableData(tableList[i]);
+                        tables[tableList[i]] = data;
+                    }
                 }
+            } finally{
+                pdb.close();
             }
-            pdb.close();
 
-            var q = new Pdb.Query(tables);
+            var q = new Pdb.Query(tables, true);
             for (var i = 0, len = queryQueue.length; i < len; i++) {
                 var queue = queryQueue[i];
                 var fn = null;
@@ -962,19 +964,22 @@ namespace Pdb {
                         q.from(queue.ex.tableName, queue.ex.aliasName);
                         break;
                     case "leftJoin":
-                        q.leftJoin(queue.ex.tableName, queue.ex.aliasName, fn, params, queue.ex.isInnerQuery);
+                        q.leftJoin(queue.ex.tableName, queue.ex.aliasName, fn, params);
                         break;
                     case "innerJoin":
-                        q.innerJoin(queue.ex.tableName, queue.ex.aliasName, fn, params, queue.ex.isInnerQuery);
+                        q.innerJoin(queue.ex.tableName, queue.ex.aliasName, fn, params);
                         break;
                     case "where":
-                        q.where(fn, params, queue.ex.isInnerQuery);
+                        q.where(fn, params);
                         break;
                     case "orderBy":
                         q.orderBy(queue.ex.orderArray, params);
                         break;
                     case "groupBy":
                         q.groupBy(queue.ex.groupColumns);
+                        break;
+                    case "distinct":
+                        q.distinct();
                         break;
                     case "select":
                         q.select(fn, params);
